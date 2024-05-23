@@ -1,0 +1,111 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/math/SafeMath.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+contract LearningCommunity is Ownable {
+    using SafeMath for uint256;
+
+    IERC20 public maartionToken;
+
+    struct Tutor {
+        bool isActive;
+        uint256 rating;
+        uint256 sessions;
+    }
+
+    struct Session {
+        address tutor;
+        address student;
+        uint256 fee;
+        uint256 startTime;
+        uint256 endTime;
+        bool completed;
+        uint256 rating;
+    }
+
+    uint256 public nextSessionId;
+    mapping(address => Tutor) public tutors;
+    mapping(uint256 => Session) public sessions;
+
+    event TutorRegistered(address tutor);
+    event TutorDeregistered(address tutor);
+    event SessionCreated(uint256 sessionId, address tutor, address student, uint256 fee, uint256 startTime, uint256 endTime);
+    event SessionCompleted(uint256 sessionId, uint256 rating);
+
+    constructor(address _maartionToken) {
+        maartionToken = IERC20(_maartionToken);
+    }
+
+    modifier onlyActiveTutor() {
+        require(tutors[msg.sender].isActive, "Only active tutors can perform this action");
+        _;
+    }
+
+    function registerTutor() public {
+        require(!tutors[msg.sender].isActive, "Tutor is already registered");
+
+        tutors[msg.sender] = Tutor({
+            isActive: true,
+            rating: 0,
+            sessions: 0
+        });
+
+        emit TutorRegistered(msg.sender);
+    }
+
+    function deregisterTutor() public onlyActiveTutor {
+        tutors[msg.sender].isActive = false;
+        emit TutorDeregistered(msg.sender);
+    }
+
+    function createSession(address _tutor, uint256 _fee, uint256 _startTime, uint256 _endTime) public {
+        require(tutors[_tutor].isActive, "Tutor is not active");
+        require(_startTime < _endTime, "Invalid session time");
+
+        uint256 sessionId = nextSessionId;
+        sessions[sessionId] = Session({
+            tutor: _tutor,
+            student: msg.sender,
+            fee: _fee,
+            startTime: _startTime,
+            endTime: _endTime,
+            completed: false,
+            rating: 0
+        });
+
+        nextSessionId++;
+        
+        emit SessionCreated(sessionId, _tutor, msg.sender, _fee, _startTime, _endTime);
+    }
+
+    function completeSession(uint256 _sessionId, uint256 _rating) public {
+        Session storage session = sessions[_sessionId];
+        require(msg.sender == session.student, "Only the student can complete the session");
+        require(!session.completed, "Session already completed");
+        require(block.timestamp > session.endTime, "Session time has not ended");
+        require(_rating <= 5, "Rating should be between 0 and 5");
+
+        session.completed = true;
+        session.rating = _rating;
+
+        tutors[session.tutor].rating = (tutors[session.tutor].rating.mul(tutors[session.tutor].sessions).add(_rating)).div(tutors[session.tutor].sessions.add(1));
+        tutors[session.tutor].sessions++;
+
+        maartionToken.transferFrom(msg.sender, session.tutor, session.fee);
+
+        emit SessionCompleted(_sessionId, _rating);
+    }
+
+    function getTutorDetails(address _tutor) public view returns (bool isActive, uint256 rating, uint256 sessions) {
+        Tutor storage tutor = tutors[_tutor];
+        return (tutor.isActive, tutor.rating, tutor.sessions);
+    }
+
+    function getSessionDetails(uint256 _sessionId) public view returns (address tutor, address student, uint256 fee, uint256 startTime, uint256 endTime, bool completed, uint256 rating) {
+        Session storage session = sessions[_sessionId];
+        return (session.tutor, session.student, session.fee, session.startTime, session.endTime, session.completed, session.rating);
+    }
+}
